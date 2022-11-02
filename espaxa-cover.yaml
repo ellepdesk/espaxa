@@ -1,0 +1,79 @@
+esphome:
+  name: raam-2
+  includes:
+    - AXA/espaxacover.h
+  # on_boot:
+  #   - priority: -300
+  #     then:
+  #       - script.execute: try_sleep
+
+esp32:
+  board: esp32-s2-saola-1
+  variant: ESP32S2
+  framework:
+    type: esp-idf
+
+
+#reference to custom component, change file location if needed
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+
+  ap:
+    ssid: "espaxa-test Fallback Hotspot"
+    password: !secret fallback_password
+
+# Enable logging
+logger:
+
+# Enable Home Assistant API (use password if needed)
+api:
+  password: ""
+
+#enable Over-The-Air updates (use password if needed)
+ota:
+
+# binary_sensor:
+#   - platform: homeassistant
+#     id: prevent_deep_sleep
+#     name: Prevent Deep Sleep
+#     entity_id: input_boolean.prevent_deep_sleep
+
+deep_sleep:
+  id: sleepy
+
+script:
+  - id: try_sleep
+    then:
+    - logger.log: "waiting for api"
+
+    - wait_until:
+      - api.connected
+    - logger.log: "waiting for idle"
+
+    - wait_until:
+      - lambda: |-
+          return (id(my_axa).current_operation == CoverOperation::COVER_OPERATION_IDLE);
+    - logger.log: "Going to sleep!"
+    - delay: 10s
+    - deep_sleep.enter:
+        id: sleepy
+        sleep_duration: 1min
+
+uart:
+  tx_pin: GPIO21
+  rx_pin: GPIO17
+  baud_rate: 19200
+  stop_bits: 2
+  id: uart_bus
+
+cover:
+  - platform: custom
+    lambda: |-
+      auto my_axa = new EspAxaCover(id(uart_bus));
+      App.register_component(my_axa);
+      return {my_axa};
+    covers:
+     name: "raam"
+     id: my_axa

@@ -32,7 +32,6 @@ enum class AxaPosition{
   OPEN_3,
   OPEN_FULL,
 };
-const char* tag = "espaxa";
 const int poll_delay_ms = 60000;
 
 const int unlock_time_ms = 10000;
@@ -61,7 +60,7 @@ class EspAxaCover :
     {}
 
   void setup() override {
-    ESP_LOGCONFIG(tag, "Setting up AXA UART...");
+    ESP_LOGCONFIG("espaxa", "Setting up AXA UART...");
   }
 
   CoverTraits get_traits() override {
@@ -94,7 +93,7 @@ class EspAxaCover :
       {
         uint8_t read_buf[128] = {0};
         read_array(read_buf, min(sizeof(read_buf), uint32_t(available())));
-        // ESP_LOGCONFIG(tag, "junk: %s", read_buf);
+        // ESP_LOGCONFIG("espaxa", "junk: %s", read_buf);
 
       }
 
@@ -152,7 +151,7 @@ class EspAxaCover :
         break;
       }
     }
-    ESP_LOGCONFIG(tag, "send_cmd(%i): %i", int(cmd), int(return_code));
+    ESP_LOGCONFIG("espaxa", "send_cmd(%i): %i", int(cmd), int(return_code));
     return return_code;
   }
 

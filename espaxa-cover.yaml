@@ -1,7 +1,8 @@
 esphome:
   name: raam-2
-  includes:
-    - AXA/espaxacover.h
+  libraries:
+    - https://github.com/ellepdesk/espaxa.git
+
   # on_boot:
   #   - priority: -300
   #     then:
@@ -19,6 +20,7 @@ esp32:
 wifi:
   ssid: !secret wifi_ssid
   password: !secret wifi_password
+  power_save_mode: HIGH
 
   ap:
     ssid: "espaxa-test Fallback Hotspot"
@@ -71,6 +73,7 @@ uart:
 cover:
   - platform: custom
     lambda: |-
+      #include <espaxa.h>
       auto my_axa = new EspAxaCover(id(uart_bus));
       App.register_component(my_axa);
       return {my_axa};

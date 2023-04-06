@@ -92,7 +92,7 @@ class EspAxaCover :
       if(available())
       {
         uint8_t read_buf[128] = {0};
-        read_array(read_buf, min(sizeof(read_buf), uint32_t(available())));
+        read_array(read_buf, min<size_t>(sizeof(read_buf), uint32_t(available())));
         // ESP_LOGCONFIG("espaxa", "junk: %s", read_buf);
 
       }
@@ -124,7 +124,7 @@ class EspAxaCover :
     }
     write_str(cmd_str);
     delay(50);
-    read_array(read_buf, min(sizeof(read_buf), uint32_t(available())));
+    read_array(read_buf, min<size_t>(sizeof(read_buf), uint32_t(available())));
     size_t len = min(strlen((char*)read_buf), sizeof(read_buf));
 
     for (int i = 0; i < len; i++)

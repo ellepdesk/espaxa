@@ -1,46 +1,72 @@
+
+substitutions:
+  devicename: "raam-kantoor"
+
 esphome:
-  name: raam-2
+  name: ${devicename}
+  # Download library from github
   libraries:
     - https://github.com/ellepdesk/espaxa.git
 
-  # on_boot:
-  #   - priority: -300
-  #     then:
-  #       - script.execute: try_sleep
+  # Comment above and un-comment below to use local files
+  # includes:
+  #   - "src/espaxa.h"
+
+  # Enable serial port over usb on esp-s2
+  platformio_options:
+    board_build.extra_flags:
+      - "-DARDUINO_USB_CDC_ON_BOOT=0"
 
 esp32:
-  board: esp32-s2-saola-1
-  variant: ESP32S2
+  board: lolin_s2_mini
   framework:
-    type: esp-idf
+    type: arduino
+    version: 2.0.5
+    platform_version: 5.2.0
 
-
-#reference to custom component, change file location if needed
 
 wifi:
   ssid: !secret wifi_ssid
   password: !secret wifi_password
+  fast_connect: true
   power_save_mode: HIGH
 
   ap:
     ssid: "espaxa-test Fallback Hotspot"
     password: !secret fallback_password
 
+  # use manual ip for faster connect
+  manual_ip:
+    static_ip: 192.168.100.153
+    gateway: 192.168.100.2
+    subnet: 255.255.255.0
+    dns1: 192.168.100.2
+
 # Enable logging
 logger:
 
+
 # Enable Home Assistant API (use password if needed)
-api:
-  password: ""
+# api:
+#   password: ""
+
+# use MQTT, recommended when using deep sleep
+mqtt:
+  id: mqtt_cli
+  broker: 192.168.100.2
+  birth_message:
+  will_message:
+  # After connection to MQTT there is either a command, or we can go to sleep
+  on_connect:
+    - wait_until: mqtt.connected
+    - delay: 1s
+    - script.execute: try_sleep
 
 #enable Over-The-Air updates (use password if needed)
 ota:
 
-# binary_sensor:
-#   - platform: homeassistant
-#     id: prevent_deep_sleep
-#     name: Prevent Deep Sleep
-#     entity_id: input_boolean.prevent_deep_sleep
+# preferences:
+#   flash_write_interval: 0s
 
 deep_sleep:
   id: sleepy
@@ -48,20 +74,16 @@ deep_sleep:
 script:
   - id: try_sleep
     then:
-    - logger.log: "waiting for api"
-
-    - wait_until:
-      - api.connected
-    - logger.log: "waiting for idle"
-
-    - wait_until:
-      - lambda: |-
-          return (id(my_axa).current_operation == CoverOperation::COVER_OPERATION_IDLE);
-    - logger.log: "Going to sleep!"
-    - delay: 10s
-    - deep_sleep.enter:
-        id: sleepy
-        sleep_duration: 1min
+      - logger.log: "trying sleep"
+      - wait_until:
+        # Only sleep when IDLE
+        - lambda: |-
+            return (id(my_axa).current_operation == CoverOperation::COVER_OPERATION_IDLE);
+      - logger.log: "Going to sleep!"
+      - delay: 1s
+      - deep_sleep.enter:
+          id: sleepy
+          sleep_duration: 5m
 
 uart:
   tx_pin: GPIO21
@@ -70,13 +92,21 @@ uart:
   stop_bits: 2
   id: uart_bus
 
+switch:
+  - platform: safe_mode
+    name: "${devicename} Safe Mode"
+    # command_retain makes sure the message will be kept on the server until the esp is awake again
+    command_retain: true
+
 cover:
   - platform: custom
     lambda: |-
-      #include <espaxa.h>
+      #include "espaxa.h"
       auto my_axa = new EspAxaCover(id(uart_bus));
       App.register_component(my_axa);
       return {my_axa};
     covers:
-     name: "raam"
+     name: "${devicename}"
      id: my_axa
+     # command_retain makes sure the message will be kept on the server until the esp is awake again
+     command_retain: true

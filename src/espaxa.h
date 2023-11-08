@@ -18,6 +18,7 @@ enum class AxaCode {
   OK = 200,
   Unlocked = 210,
   Locked = 211,
+  LockedUnsafe = 212,
   Device = 260,
   Firmware = 261,
   Error = 502,
@@ -259,6 +260,7 @@ class EspAxaCover:
           return AxaPosition::OPEN_MANUAL;
         break;
       }
+      case AxaCode::LockedUnsafe:
       case AxaCode::Locked:
       {
         return AxaPosition::LOCKED;

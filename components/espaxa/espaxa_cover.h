@@ -2,6 +2,7 @@
 
 #include <deque>
 
+#include "esphome/components/binary_sensor/binary_sensor.h"
 #include "esphome/components/cover/cover.h"
 #include "esphome/components/uart/uart.h"
 #include "esphome/core/component.h"
@@ -43,6 +44,9 @@ class EspAxaCover : public cover::Cover, public Component, public uart::UARTDevi
   void set_lock_duration(uint32_t ms) { this->lock_duration_ = ms; }
   void set_poll_interval(uint32_t ms) { this->poll_interval_ = ms; }
   void set_moving_poll_interval(uint32_t ms) { this->moving_poll_interval_ = ms; }
+  void set_release_before_close(bool release) { this->release_before_close_ = release; }
+  // On = unlocked, as for Home Assistant's lock device class
+  void set_lock_sensor(binary_sensor::BinarySensor *sensor) { this->lock_sensor_ = sensor; }
 
  protected:
   enum class TxState : uint8_t { IDLE, WAKING, WAITING };
@@ -58,16 +62,21 @@ class EspAxaCover : public cover::Cover, public Component, public uart::UARTDevi
 
   // Motion handling
   void start_move_(float target);
+  void start_close_();
   void stop_();
+  void lock_failed_();
+  void publish_lock_(AxaCode code);
   void finish_move_(float position);
   void recompute_position_(uint32_t now);
   void update_motion_(uint32_t now);
 
   uint32_t unlock_duration_{10000};
   uint32_t open_duration_{50000};
-  uint32_t lock_duration_{30000};
+  uint32_t lock_duration_{45000};
   uint32_t poll_interval_{30000};
   uint32_t moving_poll_interval_{2000};
+  bool release_before_close_{true};
+  binary_sensor::BinarySensor *lock_sensor_{nullptr};
 
   std::deque<AxaCommand> commands_;
   TxState tx_state_{TxState::IDLE};
@@ -92,6 +101,10 @@ class EspAxaCover : public cover::Cover, public Component, public uart::UARTDevi
   uint32_t move_delay_{0};
   // Time the estimated position reached closed, the AXA then locks
   uint32_t closed_since_{0};
+  // The lock wait ran out, waiting for a last STATUS
+  bool lock_check_{false};
+  // The current close already ran a second time after a failed lock
+  bool close_retried_{false};
   uint32_t last_publish_{0};
 };
 

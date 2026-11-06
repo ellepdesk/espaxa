@@ -64,9 +64,12 @@ cover:
     # Defaults, tune to your window
     # unlock_duration: 10s
     # open_duration: 50s
-    # lock_duration: 30s
+    # lock_duration: 45s
     # poll_interval: 30s
     # moving_poll_interval: 2s
+    # release_before_close: true  # OPEN before CLOSE, releases the AXA
+    lock:
+      name: "Lock"
 
 button:
   - platform: restart

@@ -64,9 +64,12 @@ void EspAxaCover::dump_config() {
                 "  Unlock Duration: %.1fs\n"
                 "  Open Duration: %.1fs\n"
                 "  Lock Duration: %.1fs\n"
-                "  Poll Interval: %.1fs (moving: %.1fs)",
+                "  Poll Interval: %.1fs (moving: %.1fs)\n"
+                "  Release Before Close: %s",
                 this->unlock_duration_ / 1e3f, this->open_duration_ / 1e3f, this->lock_duration_ / 1e3f,
-                this->poll_interval_ / 1e3f, this->moving_poll_interval_ / 1e3f);
+                this->poll_interval_ / 1e3f, this->moving_poll_interval_ / 1e3f,
+                YESNO(this->release_before_close_));
+  LOG_BINARY_SENSOR("  ", "Lock", this->lock_sensor_);
 }
 
 CoverTraits EspAxaCover::get_traits() {
@@ -214,6 +217,9 @@ void EspAxaCover::handle_response_(AxaCommand cmd, AxaCode code, const char *lin
       if (code != AxaCode::OK) {
         ESP_LOGW(TAG, "%s failed (%d)", command_to_str(cmd), static_cast<int>(code));
         this->commands_.clear();
+        // The AXA accepted the OPEN that releases it, don't leave it opening
+        if (cmd == AxaCommand::CLOSE && this->release_before_close_)
+          this->queue_(AxaCommand::STOP);
         this->current_operation = COVER_OPERATION_IDLE;
         this->motion_started_ = false;
         this->queue_(AxaCommand::STATUS);
@@ -253,8 +259,16 @@ void EspAxaCover::handle_response_(AxaCommand cmd, AxaCode code, const char *lin
           this->finish_move_(COVER_OPEN);
         }
       }
-      if (code == AxaCode::LOCKED || code == AxaCode::LOCKED_UNSAFE || code == AxaCode::UNLOCKED)
+      if (code == AxaCode::LOCKED || code == AxaCode::LOCKED_UNSAFE || code == AxaCode::UNLOCKED) {
         this->last_status_ = code;
+        this->publish_lock_(code);
+      }
+      if (this->lock_check_) {
+        this->lock_check_ = false;
+        // Still closing: this last STATUS did not confirm the lock either
+        if (this->current_operation == COVER_OPERATION_CLOSING)
+          this->lock_failed_();
+      }
       break;
     }
   }
@@ -270,7 +284,20 @@ void EspAxaCover::handle_response_(AxaCommand cmd, AxaCode code, const char *lin
 void EspAxaCover::start_move_(float target) {
   const uint32_t now = millis();
   this->recompute_position_(now);
+
+  bool locking = this->current_operation == COVER_OPERATION_CLOSING && this->closed_since_ != 0;
+  if (locking && target < POSITION_EPSILON) {
+    // Already closing, let it lock
+    this->publish_state();
+    return;
+  }
+  // Mid-lock, assume a full unlock is needed
+  if (locking)
+    this->locked_ = true;
+
   this->commands_.clear();
+  this->lock_check_ = false;
+  this->close_retried_ = false;
 
   if (this->current_operation != COVER_OPERATION_IDLE) {
     this->queue_(AxaCommand::STOP);
@@ -289,11 +316,7 @@ void EspAxaCover::start_move_(float target) {
     this->current_operation = COVER_OPERATION_OPENING;
     this->queue_(AxaCommand::OPEN);
   } else {
-    // CLOSE is preceded by OPEN, as in the original implementation
-    this->move_delay_ = 0;
-    this->current_operation = COVER_OPERATION_CLOSING;
-    this->queue_(AxaCommand::OPEN);
-    this->queue_(AxaCommand::CLOSE);
+    this->start_close_();
   }
   this->last_operation_ = this->current_operation;
   // Poll soon after starting
@@ -301,8 +324,53 @@ void EspAxaCover::start_move_(float target) {
   this->publish_state();
 }
 
+void EspAxaCover::start_close_() {
+  // The AXA blocks at its end position, a short OPEN releases it
+  // (galagaking/espaxa). Seen to make the AXA open instead.
+  if (this->release_before_close_)
+    this->queue_(AxaCommand::OPEN);
+  this->queue_(AxaCommand::CLOSE);
+  this->move_delay_ = 0;
+  this->motion_started_ = false;
+  this->closed_since_ = 0;
+  this->current_operation = COVER_OPERATION_CLOSING;
+}
+
+// The lock wait ran out. Seen when the AXA opened instead of closing: stop
+// it and close once more, from an unknown position.
+void EspAxaCover::lock_failed_() {
+  this->queue_(AxaCommand::STOP);
+  if (!this->close_retried_) {
+    ESP_LOGW(TAG, "Lock not confirmed, closing again");
+    this->close_retried_ = true;
+    // Assume fully open, the worst case; a 211 ends the close early
+    this->position = COVER_OPEN;
+    this->locked_ = false;
+    this->start_close_();
+    this->last_poll_ = millis();
+    this->publish_state();
+    return;
+  }
+  // Not confirmed twice, the next STATUS will tell
+  ESP_LOGW(TAG, "Lock not confirmed");
+  this->queue_(AxaCommand::STATUS);
+  this->finish_move_(COVER_CLOSED);
+}
+
+void EspAxaCover::publish_lock_(AxaCode code) {
+  // Only 211 Strong Locked counts, 212 may not be fully locked
+  if (this->lock_sensor_ != nullptr)
+    this->lock_sensor_->publish_state(code != AxaCode::LOCKED);
+}
+
 void EspAxaCover::stop_() {
   this->recompute_position_(millis());
+  if (this->current_operation == COVER_OPERATION_CLOSING && this->closed_since_ != 0) {
+    // The window is closed already, interrupting the lock gains nothing
+    ESP_LOGI(TAG, "Stop ignored while locking");
+    this->publish_state();
+    return;
+  }
   this->commands_.clear();
   this->queue_(AxaCommand::STOP);
   this->target_ = this->position;
@@ -358,10 +426,10 @@ void EspAxaCover::update_motion_(uint32_t now) {
     // Fully closed, give the AXA time to lock unless STATUS confirms it first
     if (this->closed_since_ == 0)
       this->closed_since_ = now;
-    if (now - this->closed_since_ >= this->lock_duration_) {
-      this->locked_ = true;
-      this->finish_move_(COVER_CLOSED);
-      return;
+    if (now - this->closed_since_ >= this->lock_duration_ && !this->lock_check_) {
+      // The lock may have come just after the last poll, ask once more
+      this->lock_check_ = true;
+      this->queue_(AxaCommand::STATUS);
     }
   }
 

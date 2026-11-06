@@ -1,112 +1,80 @@
-
 substitutions:
   devicename: "raam-kantoor"
+  # UART pins to the MCP2003A LIN transceiver (TXD = pin 4, RXD = pin 1)
+  tx_pin: GPIO21
+  rx_pin: GPIO20
 
 esphome:
   name: ${devicename}
-  # Download library from github
-  libraries:
-    - https://github.com/ellepdesk/espaxa.git
+  friendly_name: ${devicename}
 
-  # Comment above and un-comment below to use local files
-  # includes:
-  #   - "src/espaxa.h"
-
-  # Enable serial port over usb on esp-s2
-  platformio_options:
-    board_build.extra_flags:
-      - "-DARDUINO_USB_CDC_ON_BOOT=0"
+external_components:
+  # Use the component from github
+  # - source: github://ellepdesk/espaxa
+  # Or from this checkout
+  - source:
+      type: local
+      path: components
 
 esp32:
-  board: lolin_s2_mini
+  board: esp32-c3-devkitm-1
   framework:
-    type: arduino
-    version: 2.0.5
-    platform_version: 5.2.0
-
+    type: esp-idf
 
 wifi:
   ssid: !secret wifi_ssid
   password: !secret wifi_password
   fast_connect: true
-  power_save_mode: HIGH
 
   ap:
-    ssid: "espaxa-test Fallback Hotspot"
+    ssid: "${devicename} Fallback Hotspot"
     password: !secret fallback_password
 
   # use manual ip for faster connect
   manual_ip:
     static_ip: 192.168.100.153
-    gateway: 192.168.100.2
+    gateway: 192.168.100.1
     subnet: 255.255.255.0
-    dns1: 192.168.100.2
+    dns1: 192.168.100.1
 
-# Enable logging
+captive_portal:
+
+# Logs go to the built-in USB serial, the UART pins are free for the AXA
 logger:
 
+api:
+  encryption:
+    key: !secret api_encryption_key
 
-# Enable Home Assistant API (use password if needed)
-# api:
-#   password: ""
-
-# use MQTT, recommended when using deep sleep
-mqtt:
-  id: mqtt_cli
-  broker: 192.168.100.2
-  birth_message:
-  will_message:
-  # After connection to MQTT there is either a command, or we can go to sleep
-  on_connect:
-    - wait_until: mqtt.connected
-    - delay: 1s
-    - script.execute: try_sleep
-
-#enable Over-The-Air updates (use password if needed)
 ota:
-
-# preferences:
-#   flash_write_interval: 0s
-
-deep_sleep:
-  id: sleepy
-
-script:
-  - id: try_sleep
-    then:
-      - logger.log: "trying sleep"
-      - wait_until:
-        # Only sleep when IDLE
-        - lambda: |-
-            return (id(my_axa).current_operation == CoverOperation::COVER_OPERATION_IDLE);
-      - logger.log: "Going to sleep!"
-      - delay: 1s
-      - deep_sleep.enter:
-          id: sleepy
-          sleep_duration: 5m
+  - platform: esphome
+    password: !secret ota_password
 
 uart:
-  tx_pin: GPIO21
-  rx_pin: GPIO17
+  id: uart_bus
+  tx_pin: ${tx_pin}
+  rx_pin: ${rx_pin}
   baud_rate: 19200
   stop_bits: 2
-  id: uart_bus
-
-switch:
-  - platform: safe_mode
-    name: "${devicename} Safe Mode"
-    # command_retain makes sure the message will be kept on the server until the esp is awake again
-    command_retain: true
 
 cover:
-  - platform: custom
-    lambda: |-
-      #include "espaxa.h"
-      auto my_axa = new EspAxaCover(id(uart_bus));
-      App.register_component(my_axa);
-      return {my_axa};
-    covers:
-     name: "${devicename}"
-     id: my_axa
-     # command_retain makes sure the message will be kept on the server until the esp is awake again
-     command_retain: true
+  - platform: espaxa
+    id: my_axa
+    name: None
+    # Defaults, tune to your window
+    # unlock_duration: 10s
+    # open_duration: 50s
+    # lock_duration: 30s
+    # poll_interval: 30s
+    # moving_poll_interval: 2s
+
+button:
+  - platform: restart
+    name: "Restart"
+  - platform: safe_mode
+    name: "Safe Mode"
+
+sensor:
+  - platform: wifi_signal
+    name: "WiFi Signal"
+    update_interval: 60s
